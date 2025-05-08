@@ -1,0 +1,144 @@
+version: '3.8'
+
+services:
+  # Main application service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: indserf/unsupervised:latest
+    container_name: indserf-app
+    volumes:
+      - ./data:/home/appuser/data
+      - ./models:/home/appuser/models
+      - ./results:/home/appuser/results
+      - ./logs:/home/appuser/logs
+    environment:
+      - MODEL_DIR=/home/appuser/models
+      - DATA_DIR=/home/appuser/data
+      - RESULTS_DIR=/home/appuser/results
+      - LOG_DIR=/home/appuser/logs
+      - LOG_LEVEL=INFO
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Jupyter notebook service for interactive analysis
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: indserf/unsupervised:latest
+    container_name: indserf-jupyter
+    command: ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''"]
+    volumes:
+      - ./data:/home/appuser/data
+      - ./models:/home/appuser/models
+      - ./results:/home/appuser/results
+      - ./notebooks:/home/appuser/notebooks
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+
+  # MLflow for experiment tracking
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: indserf-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlflow:/mlflow
+    environment:
+      - MLFLOW_TRACKING_URI=sqlite:///mlflow/mlflow.db
+    command: ["mlflow", "server", "--host=0.0.0.0"]
+
+  # Monitoring service using Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: indserf-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  # Visualization using Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: indserf-grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Redis for caching and message queuing
+  redis:
+    image: redis:alpine
+    container_name: indserf-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # Development environment
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: indserf/unsupervised:dev
+    container_name: indserf-dev
+    volumes:
+      - .:/home/appuser/app
+      - ./data:/home/appuser/data
+      - ./models:/home/appuser/models
+      - ./results:/home/appuser/results
+    environment:
+      - PYTHONPATH=/home/appuser/app
+      - DEVELOPMENT=1
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  redis_data:
+
+networks:
+  default:
+    name: indserf-network
+
+# Additional configurations
+x-extras:
+  app:
+    scale: 1
+    restart_policy:
+      condition: on-failure
+      delay: 5s
+      max_attempts: 3
+      window: 120s

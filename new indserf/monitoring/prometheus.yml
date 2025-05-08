@@ -1,0 +1,150 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Self monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Application metrics
+  - job_name: 'indserf-app'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['app:8000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'indserf-app'
+
+  # Node exporter metrics
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # GPU metrics
+  - job_name: 'gpu'
+    static_configs:
+      - targets: ['dcgm-exporter:9400']
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # MLflow metrics
+  - job_name: 'mlflow'
+    static_configs:
+      - targets: ['mlflow:5000']
+    metrics_path: '/metrics'
+
+# Remote write configuration (optional)
+remote_write:
+  # - url: "http://remote-storage:9201/write"
+
+# Remote read configuration (optional)
+remote_read:
+  # - url: "http://remote-storage:9201/read"
+
+# Storage configuration
+storage:
+  tsdb:
+    path: /prometheus
+    retention:
+      time: 15d
+      size: 5GB
+
+# Alert configuration
+alerting_rules:
+  groups:
+    - name: ml_pipeline_alerts
+      rules:
+        - alert: HighModelError
+          expr: model_error_rate > 0.3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High model error rate detected
+            description: Model error rate is above 30% for 5 minutes
+
+        - alert: GPUUtilizationHigh
+          expr: gpu_utilization > 90
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: GPU utilization is high
+            description: GPU utilization has been above 90% for 10 minutes
+
+        - alert: ModelTrainingStuck
+          expr: rate(model_training_progress[1h]) < 0.1
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: Model training appears to be stuck
+            description: Training progress has been very low for the last 15 minutes
+
+        - alert: HighMemoryUsage
+          expr: process_resident_memory_bytes / process_total_memory_bytes > 0.9
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High memory usage detected
+            description: Memory usage is above 90% for 5 minutes
+
+# Scrape configurations for service discovery (optional)
+service_discovery:
+  # Kubernetes service discovery
+  kubernetes_sd_configs:
+    - role: pod
+      namespaces:
+        names:
+          - default
+          - monitoring
+
+  # Docker service discovery
+  docker_sd_configs:
+    - host: unix:///var/run/docker.sock
+      refresh_interval: 15s
+
+# TLS and authentication configuration (if needed)
+tls_config:
+  # cert_file: /etc/prometheus/cert.pem
+  # key_file: /etc/prometheus/key.pem
+  # ca_file: /etc/prometheus/ca.pem
+
+# Basic authentication (if needed)
+basic_auth:
+  # username: admin
+  # password: secure_password
+
+# Recording rules for frequently used queries
+recording_rules:
+  groups:
+    - name: ml_metrics
+      interval: 1m
+      rules:
+        - record: job:model_accuracy:avg_over_time_1h
+          expr: avg_over_time(model_accuracy[1h])
+
+        - record: job:gpu_memory_used:max
+          expr: max(gpu_memory_used) by (gpu)
