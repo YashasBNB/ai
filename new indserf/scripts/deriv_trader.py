@@ -55,6 +55,52 @@ class DerivTrader:
         self.active_trades = {}
         self.websocket = None
         self.account_info = None
+        # Feature configuration
+        self.feature_columns = ['open', 'high', 'low', 'close', 'volume']
+        self.window_size = 30  # Number of candles to consider
+        
+        # Model configuration
+        from scripts.unified_model import create_trainer
+        self.model_trainer = create_trainer(self.model_dir)
+        self.logger.info("Initialized unified persistent model")
+        
+    def prepare_features(self, data: Dict) -> np.ndarray:
+        """Prepare features for model input"""
+        features = []
+        for col in self.feature_columns:
+            features.append(data[col][-self.window_size:])
+        features = np.array(features).T
+        return features
+        
+    def evaluate_trading_signals(self, symbol: str, error: float, 
+                               latent: np.ndarray, reconstructed: np.ndarray) -> bool:
+        """Evaluate if we should trade based on model outputs"""
+        # Anomaly detection threshold (adjustable)
+        ANOMALY_THRESHOLD = 0.1
+        
+        # Check if current pattern is anomalous
+        is_anomaly = error > ANOMALY_THRESHOLD
+        
+        # Get predicted direction from reconstructed data
+        last_close = reconstructed[-1][3]  # close is 4th feature
+        prev_close = reconstructed[-2][3]
+        predicted_direction = 1 if last_close > prev_close else -1
+        
+        # Trading conditions
+        should_trade = (
+            is_anomaly and 
+            predicted_direction != 0 and
+            len(self.active_trades) < self.max_concurrent_trades
+        )
+        
+        if should_trade:
+            self.logger.info(
+                f"{symbol}: Signal detected - "
+                f"Anomaly Score: {error:.4f}, "
+                f"Direction: {'UP' if predicted_direction > 0 else 'DOWN'}"
+            )
+        
+        return should_trade
         
         # Performance tracking
         self.model_updates = []
@@ -300,18 +346,43 @@ class DerivTrader:
             for signal in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(signal, lambda: asyncio.create_task(self.stop_trading()))
             
+            # Initialize unified model for all symbols
+            self.model_trainer = create_trainer(self.model_dir)
+            logging.info(f"Initialized unified model for all symbols")
+            
             self.is_running = True
             while self.is_running:
-                # Process all requested symbols
                 for symbol in symbols:
                     try:
                         # Get market data
                         data = await self.get_market_data(symbol)
                         
-                        # Analyze patterns
-                        analysis = await self.analyze_pattern(data)
-                        if analysis:
-                            # Generate trading signal
+                        # Prepare features and update model
+                        features = self.prepare_features(data)
+                        tensor_data = torch.FloatTensor(features)
+                        
+                        # Update model with new data
+                        update_result = self.model_trainer.train_step(tensor_data)
+                        self.logger.info(f"Model update for {symbol}: {update_result}")
+                        
+                        # Get predictions
+                        reconstructed, latent, error = self.model_trainer.predict(tensor_data)
+                        
+                        # Evaluate trading signals
+                        should_trade = self.evaluate_trading_signals(
+                            symbol=symbol,
+                            error=error,
+                            latent=latent.numpy(),
+                            reconstructed=reconstructed.numpy()
+                        )
+                        
+                        # Execute trade if conditions are met
+                        if should_trade:
+                            await self.execute_trade(symbol)
+                            
+                        # Save model periodically
+                        if self.model_trainer.model.model_version % 100 == 0:
+                            self.model_trainer.save_checkpoint()
                             signal = self.generate_signal(analysis)
                             
                             if signal:
@@ -342,6 +413,51 @@ class DerivTrader:
                 await learning_task
             except asyncio.CancelledError:
                 pass
+
+    async def execute_trade(self, symbol: str):
+        """Execute trade on Deriv platform"""
+        try:
+            if len(self.active_trades) >= self.max_concurrent_trades:
+                self.logger.warning(f"Maximum concurrent trades reached ({self.max_concurrent_trades})")
+                return
+                
+            # Calculate position size based on risk
+            account_balance = float(self.account_info['balance'])
+            risk_amount = account_balance * (self.risk_percent / 100)
+            
+            # Place trade (implement your specific Deriv API calls here)
+            trade_request = {
+                "buy": 1,
+                "subscribe": 1,
+                "parameters": {
+                    "amount": risk_amount,
+                    "basis": "stake",
+                    "contract_type": "CALL",  # or "PUT" based on signal
+                    "symbol": symbol,
+                    "duration": 5,  # adjust based on timeframe
+                    "duration_unit": "m"  # minutes
+                }
+            }
+            
+            await self.websocket.send(json.dumps(trade_request))
+            response = await self.websocket.recv()
+            trade_response = json.loads(response)
+            
+            if "error" in trade_response:
+                raise Exception(f"Trade failed: {trade_response['error']['message']}")
+                
+            # Track active trade
+            self.active_trades[symbol] = {
+                "id": trade_response["buy"]["contract_id"],
+                "entry_time": datetime.now(),
+                "amount": risk_amount
+            }
+            
+            self.logger.info(f"Executed trade for {symbol} - Amount: {risk_amount}")
+            
+        except Exception as e:
+            self.logger.error(f"Error executing trade for {symbol}: {str(e)}")
+
 
 if __name__ == "__main__":
     import argparse
