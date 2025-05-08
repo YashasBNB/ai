@@ -283,11 +283,26 @@ class DerivTrader:
             
             # Setup signal handlers for graceful shutdown
             loop = asyncio.get_event_loop()
+            # Available trading pairs
+            self.trading_pairs = [
+                "frxAUDCAD", "frxAUDCHF", "frxAUDJPY", "frxAUDNZD", "frxAUDUSD",
+                "frxEURAUD", "frxEURCAD", "frxEURCHF", "frxEURGBP", "frxEURJPY",
+                "frxEURNZD", "frxEURUSD", "frxGBPAUD", "frxGBPCAD", "frxGBPCHF",
+                "frxGBPJPY", "frxGBPNZD", "frxGBPUSD", "frxNZDUSD", "frxUSDCAD",
+                "frxUSDCHF", "frxUSDJPY"
+            ]
+            
+            # Validate symbols
+            invalid_symbols = [s for s in symbols if s not in self.trading_pairs]
+            if invalid_symbols:
+                raise ValueError(f"Invalid symbols: {invalid_symbols}. Must be one of {self.trading_pairs}")
+            
             for signal in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(signal, lambda: asyncio.create_task(self.stop_trading()))
             
             self.is_running = True
             while self.is_running:
+                # Process all requested symbols
                 for symbol in symbols:
                     try:
                         # Get market data

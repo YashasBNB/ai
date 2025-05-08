@@ -149,12 +149,12 @@ def validate(data_dir: str, report_file: str):
 @cli.command()
 @click.option('--model-dir', required=True, help='Model directory')
 @click.option('--timeframe', required=True, help='Trading timeframe')
-@click.option('--symbols', multiple=True, required=True, help='Trading symbols')
+@click.option('--symbols', multiple=True, help='Trading symbols (default: all available pairs)')
 @click.option('--demo/--live', default=True, help='Use demo or live account')
 def deploy(model_dir: str,
           timeframe: str,
-          symbols: List[str],
-          demo: bool):
+          symbols: Optional[List[str]] = None,
+          demo: bool = True):
     """Deploy model for trading"""
     try:
         # Load configuration
@@ -167,6 +167,18 @@ def deploy(model_dir: str,
         if timeframe not in model_status or not model_status[timeframe].get("model_files"):
             raise ValueError(f"No valid model found for timeframe {timeframe}")
             
+        # Default symbols if none specified
+        default_symbols = [
+            "frxAUDCAD", "frxAUDCHF", "frxAUDJPY", "frxAUDNZD", "frxAUDUSD",
+            "frxEURAUD", "frxEURCAD", "frxEURCHF", "frxEURGBP", "frxEURJPY",
+            "frxEURNZD", "frxEURUSD", "frxGBPAUD", "frxGBPCAD", "frxGBPCHF",
+            "frxGBPJPY", "frxGBPNZD", "frxGBPUSD", "frxNZDUSD", "frxUSDCAD",
+            "frxUSDCHF", "frxUSDJPY"
+        ]
+        
+        # Use provided symbols or default to all
+        trading_symbols = symbols if symbols else default_symbols
+        
         # Initialize trader
         trader = DerivTrader(
             api_token=os.getenv('DERIV_API_TOKEN'),
@@ -177,8 +189,10 @@ def deploy(model_dir: str,
         )
         
         click.echo(f"Starting trading system for {timeframe}")
-        click.echo(f"Trading symbols: {', '.join(symbols)}")
+        click.echo(f"Trading symbols: {', '.join(trading_symbols)}")
         click.echo(f"Mode: {'Demo' if demo else 'Live'}")
+        click.echo(f"Max concurrent trades: {config.risk.max_concurrent_trades}")
+        click.echo(f"Risk per trade: {config.risk.max_risk_percent}%")
         
         if click.confirm("Do you want to proceed?"):
             # Run trading system
