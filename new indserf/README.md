@@ -46,14 +46,9 @@ This repository implements a machine learning pipeline for discovering, learning
 
 ## File Overview
 
-- `scripts/data_loader.py`: Loads and processes candle data, adds features and labels.
 - `scripts/pattern_learner.py`: Defines and trains an autoencoder for unsupervised pattern learning.
-- `scripts/backtest_model.py`: Backtests the autoencoder, flags anomalies, and supports online continual learning.
 - `scripts/train_binary_classifier.py`: Defines and trains a deep binary classifier for candle windows.
 - `scripts/backtest_binary_classifier.py`: Backtests the classifier, fine-tunes on mistakes, and outputs metrics.
-- `scripts/pattern_discovery.py`: Clusters and analyzes rolling windows for unsupervised pattern discovery.
-- `scripts/train_candle_models.py` & `scripts/backtest_candle_models.py`: Automate training/backtesting for multiple timeframes.
-- `scripts/cleanup_old_model.py`: Moves model checkpoints for backup/cleanup.
 
 ## Example Output
 
@@ -73,11 +68,10 @@ time,recon_error,is_anomaly,close
 
 1. **Prepare Data:** Place historical candle data (CSV) in the specified data directory.
 2. **Train Models:**
-    - Run `train_candle_models.py` for unsupervised learning.
-    - Run `train_binary_classifier.py` for supervised learning.
-3. **Backtest:**
-    - Use `backtest_candle_models.py` or `backtest_binary_classifier.py` to evaluate models and generate results.
-4. **Analyze Results:**
+    - Run `pattern_learner.py` to train the autoencoder for anomaly detection.
+    - Run `train_binary_classifier.py` to train the classifier (integrated with anomaly detection).
+3. **Backtest and Analyze:**
+    - Use `backtest_binary_classifier.py` to evaluate the classifier and generate results.
     - Review generated CSVs for anomaly flags, predictions, and performance metrics.
 
 ## Requirements
